@@ -2,6 +2,8 @@
 
 This directory contains a standalone, API-driven VoIP calling agent container built on top of **PJSIP (PJSUA2)** and **FastAPI** in Python. It is optimized to run inside headless environments (like Docker containers or remote servers) without physical audio hardware.
 
+For a detailed step-by-step walkthrough of how this PJSIP container is compiled and built, see [README_BUILD.md](README_BUILD.md).
+
 ---
 
 ## 🚀 Features
