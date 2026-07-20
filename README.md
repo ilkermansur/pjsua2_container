@@ -57,7 +57,7 @@ curl -X POST http://localhost:8000/api/call \
 ```
 
 #### Option B: Synthesizing Text-to-Speech (TTS) with IVR
-If you send raw text, the container will synthesize it into natural Turkish speech using **Piper TTS** (Fahrettin voice) and automatically append the interactive voice prompt: *"Kaydı tekrar dinlemek için 1'e basın, çağrıyı sonlandırmak için 0'a basın."*
+If you send raw text, the container will synthesize it into natural Turkish speech using **Piper TTS** (Fahrettin voice). Make sure to include any DTMF instructions directly in your text (e.g., *"Kaydı tekrar dinlemek için 1'e, kapatmak için 0'a basın"*):
 
 ```bash
 curl -X POST http://localhost:8000/api/call \
@@ -65,7 +65,7 @@ curl -X POST http://localhost:8000/api/call \
   -d '{
     "target_uri": "sip:1001@your-sip-domain.com",
     "caller_id": "CustomAgent",
-    "text": "Merhaba İlker Bey, sisteminiz başarıyla kuruldu."
+    "text": "Merhaba İlker Bey, sisteminiz kuruldu. Tekrar dinlemek için bire, sonlandırmak için sıfıra basın."
   }'
 ```
 

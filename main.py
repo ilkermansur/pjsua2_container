@@ -225,13 +225,6 @@ def prepare_audio(media_file_name: str, text: str) -> str:
 def make_call_sync(target_uri, media_file_name, text):
     # Register the Python thread to the PJSIP engine
     ep.libRegisterThread("call_thread")
-    
-    # Append IVR prompt to text dynamically
-    if text:
-        text = text.strip()
-        if not text.endswith(".") and not text.endswith("!"):
-            text += "."
-        text += " Kaydı tekrar dinlemek için bir e basın, çağrıyı sonlandırmak için sıfır a basın."
         
     attempts = 2  # Total attempts (1 original + 1 retry if fails/no-answer)
     audio_path = None
