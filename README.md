@@ -30,9 +30,9 @@ docker build -t pjsua2-call-agent .
 *(Note: Compiling PJSIP from source will take 3-7 minutes during the initial build.)*
 
 ### 2. Run the Container
-Start the container exposing the FastAPI server on port `8000`:
+Start the container exposing the FastAPI server on port `8000`. To play local audio files, map a folder containing your `.wav` files into the container:
 ```bash
-docker run -d --name voip-agent -p 8000:8000 pjsua2-call-agent
+docker run -d --name voip-agent -p 8000:8000 -v ./sounds:/app/sounds pjsua2-call-agent
 ```
 
 ---
@@ -40,23 +40,26 @@ docker run -d --name voip-agent -p 8000:8000 pjsua2-call-agent
 ## 📞 Usage & API Reference
 
 ### Trigger a Call
-To initiate a SIP call, send an HTTP `POST` request to `/api/call` with the target SIP URI:
+To initiate a SIP call and play a WAV file once answered, send an HTTP `POST` request to `/api/call`:
 
 ```bash
 curl -X POST http://localhost:8000/api/call \
   -H "Content-Type: application/json" \
   -d '{
     "target_uri": "sip:1001@your-sip-domain.com",
-    "caller_id": "CustomAgent"
+    "caller_id": "CustomAgent",
+    "audio_file": "/app/sounds/announcement.wav"
   }'
 ```
+*(Note: PJSIP supports standard **PCM 16-bit, 8000Hz/16000Hz/32000Hz, Mono WAV** files.)*
 
 ### Response
 ```json
 {
   "status": "initiated",
   "target": "sip:1001@your-sip-domain.com",
-  "message": "Call thread spawned. Watch container logs for SIP state updates."
+  "audio_file": "/app/sounds/announcement.wav",
+  "message": "Call thread spawned. Audio will play once answered. Watch container logs for updates."
 }
 ```
 

@@ -10,13 +10,16 @@ app = FastAPI(title="PJSUA2 VoIP Call Agent API")
 class CallRequest(BaseModel):
     target_uri: str  # Örn: "sip:1001@your-sip-domain.com"
     caller_id: str = "CallAgent"
+    audio_file: str = None  # Örn: "/app/sounds/announcement.wav"
 
 # PJSUA2 Call Class Override to receive events
 class MyCall(pj.Call):
-    def __init__(self, acc, call_id=pj.PJSUA_INVALID_ID):
+    def __init__(self, acc, call_id=pj.PJSUA_INVALID_ID, audio_file=None):
         super().__init__(acc, call_id)
         self.sip_call_id = None
         self.is_disconnected = False
+        self.audio_file = audio_file
+        self.player = None  # Persistent player instance to prevent garbage collection
 
     def onCallState(self, prm):
         try:
@@ -31,9 +34,31 @@ class MyCall(pj.Call):
             if ci.state == pj.PJSIP_INV_STATE_DISCONNECTED:
                 print(f"  Duration    : {ci.connectDuration.sec} seconds")
                 self.is_disconnected = True
+                if self.player:
+                    self.player = None  # Release file resource
             print(f"==========================================")
         except Exception as e:
             print(f"Error in onCallState callback: {e}")
+
+    def onCallMediaState(self, prm):
+        try:
+            ci = self.getInfo()
+            for i in range(len(ci.media)):
+                if ci.media[i].type == pj.PJMEDIA_TYPE_AUDIO:
+                    aud_med = pj.AudioMedia.typecastFromMedia(self.getMedia(i))
+                    
+                    if self.audio_file and not self.player:
+                        print(f"Call Media: Opening audio file {self.audio_file}...")
+                        self.player = pj.AudioMediaPlayer()
+                        try:
+                            # Load and play the file once (no looping)
+                            self.player.createPlayer(self.audio_file, pj.PJMEDIA_FILE_NO_LOOP)
+                            self.player.startTransmit(aud_med)
+                            print("Call Media: Audio transmission started successfully.")
+                        except Exception as player_err:
+                            print(f"Error creating audio player: {player_err}")
+        except Exception as e:
+            print(f"Error in onCallMediaState callback: {e}")
 
 # Global Endpoint & Account Configuration
 ep = pj.Endpoint()
@@ -58,11 +83,11 @@ acc_cfg.idUri = "sip:callagent@localhost"
 acc = pj.Account()
 acc.create(acc_cfg)
 
-def make_call_thread(target_uri):
+def make_call_thread(target_uri, audio_file):
     # Register the Python background thread to the PJSIP engine
     ep.libRegisterThread("call_thread")
     try:
-        call = MyCall(acc)
+        call = MyCall(acc, audio_file=audio_file)
         call_prm = pj.CallOpParam(True)
         
         print(f"Worker: Initiating call to {target_uri}...")
@@ -77,11 +102,12 @@ def make_call_thread(target_uri):
 
 @app.post("/api/call")
 def trigger_call(request: CallRequest, background_tasks: BackgroundTasks):
-    background_tasks.add_task(make_call_thread, request.target_uri)
+    background_tasks.add_task(make_call_thread, request.target_uri, request.audio_file)
     return {
         "status": "initiated",
         "target": request.target_uri,
-        "message": "Call thread spawned. Watch container logs for SIP state updates."
+        "audio_file": request.audio_file,
+        "message": "Call thread spawned. Audio will play once answered. Watch container logs for updates."
     }
 
 if __name__ == "__main__":
