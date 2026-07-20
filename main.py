@@ -1,12 +1,12 @@
 import uvicorn
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI
 from pydantic import BaseModel
 import pjsua2 as pj
-import threading
 import time
 import subprocess
 import uuid
 import os
+import wave
 
 app = FastAPI(title="PJSUA2 VoIP Call Agent API")
 
@@ -16,14 +16,28 @@ class CallRequest(BaseModel):
     media_file_name: str = None  # Örn: "merhaba.mp3" veya "anons.wav"
     text: str = None  # Örn: "Merhaba İlker Bey, nasılsınız?"
 
-# PJSUA2 Call Class Override to receive events
+# Helper to get WAV duration using standard wave module
+def get_wav_duration(file_path):
+    try:
+        with wave.open(file_path, 'r') as f:
+            frames = f.getnframes()
+            rate = f.getframerate()
+            duration = frames / float(rate)
+            return duration
+    except Exception as e:
+        print(f"Error reading WAV duration: {e}")
+        return 10.0  # fallback duration in seconds
+
+# PJSUA2 Call Class Override to receive events and DTMF digits
 class MyCall(pj.Call):
     def __init__(self, acc, call_id=pj.PJSUA_INVALID_ID, audio_file=None):
         super().__init__(acc, call_id)
         self.sip_call_id = None
         self.is_disconnected = False
+        self.is_answered = False
         self.audio_file = audio_file
         self.player = None  # Persistent player instance to prevent garbage collection
+        self.dtmf_action = None  # Tracks '0' or '1' keypresses
 
     def onCallState(self, prm):
         try:
@@ -35,8 +49,11 @@ class MyCall(pj.Call):
             print(f"  State Name  : {ci.stateText}")
             print(f"  State Code  : {ci.state}")
             print(f"  Last Reason : {ci.lastReason}")
-            if ci.state == pj.PJSIP_INV_STATE_DISCONNECTED:
-                print(f"  Duration    : {ci.connectDuration.sec} seconds")
+            
+            if ci.state == pj.PJSIP_INV_STATE_CONFIRMED:
+                self.is_answered = True
+                
+            elif ci.state == pj.PJSIP_INV_STATE_DISCONNECTED:
                 self.is_disconnected = True
                 if self.player:
                     self.player = None  # Release file resource
@@ -63,6 +80,44 @@ class MyCall(pj.Call):
                             print(f"Error creating audio player: {player_err}")
         except Exception as e:
             print(f"Error in onCallMediaState callback: {e}")
+
+    def onDtmfDigit(self, prm):
+        try:
+            digit = prm.digit
+            print(f"DTMF DIGIT RECEIVED: {digit}")
+            if digit == '0':
+                self.dtmf_action = '0'
+                print("DTMF Action: User pressed 0. Hanging up the call.")
+                # Hang up the call immediately
+                call_prm = pj.CallOpParam(True)
+                self.hangup(call_prm)
+            elif digit == '1':
+                self.dtmf_action = '1'
+                print("DTMF Action: User pressed 1. Replay will trigger shortly.")
+        except Exception as e:
+            print(f"Error in onDtmfDigit callback: {e}")
+
+    def replay_audio(self):
+        try:
+            ci = self.getInfo()
+            for i in range(len(ci.media)):
+                if ci.media[i].type == pj.PJMEDIA_TYPE_AUDIO:
+                    aud_med = pj.AudioMedia.typecastFromMedia(self.getMedia(i))
+                    
+                    if self.player:
+                        try:
+                            self.player.stopTransmit(aud_med)
+                        except:
+                            pass
+                        self.player = None
+                        
+                    print("Call Media: Replaying audio file...")
+                    self.player = pj.AudioMediaPlayer()
+                    self.player.createPlayer(self.audio_file, pj.PJMEDIA_FILE_NO_LOOP)
+                    self.player.startTransmit(aud_med)
+                    print("Call Media: Replay transmission started.")
+        except Exception as e:
+            print(f"Error in replay_audio: {e}")
 
 # Global Endpoint & Account Configuration
 ep = pj.Endpoint()
@@ -165,52 +220,105 @@ def prepare_audio(media_file_name: str, text: str) -> str:
             
     return None
 
-def make_call_thread(target_uri, media_file_name, text):
-    # Register the Python background thread to the PJSIP engine
+def make_call_sync(target_uri, media_file_name, text):
+    # Register the Python thread to the PJSIP engine
     ep.libRegisterThread("call_thread")
     audio_path = None
     try:
-        # Prepare the audio in the background thread
+        # Append IVR prompt to text dynamically
+        if text:
+            text = text.strip()
+            if not text.endswith(".") and not text.endswith("!"):
+                text += "."
+            text += " Kaydı tekrar dinlemek için bir e basın, çağrıyı sonlandırmak için sıfır a basın."
+            
+        # Prepare the audio file (run TTS and format conversion)
         audio_path = prepare_audio(media_file_name, text)
-        if not audio_path and (media_file_name or text):
-            print("Worker: Failed to prepare audio. Proceeding with silent call.")
+        if not audio_path:
+            return "error: audio preparation failed"
             
         call = MyCall(acc, audio_file=audio_path)
         call_prm = pj.CallOpParam(True)
         
-        print(f"Worker: Initiating call to {target_uri}...")
+        print(f"SyncCall: Initiating call to {target_uri}...")
         call.makeCall(target_uri, call_prm)
         
-        # Keep the thread running until the call is disconnected
-        while not call.is_disconnected:
-            time.sleep(0.5)
-        print(f"Worker: Call disconnected. Ending worker thread.")
+        # Monitor the call synchronously
+        start_time = time.time()
+        answered = False
+        wav_duration = 10.0
+        play_start = 0.0
         
-        # Cleanup temporary TTS files (that start with tts_ and end with .wav)
+        while not call.is_disconnected:
+            time.sleep(0.1)
+            
+            # Detect call answer
+            if call.is_answered and not answered:
+                answered = True
+                print("SyncCall: Call answered! Starting audio duration tracking.")
+                wav_duration = get_wav_duration(audio_path)
+                print(f"SyncCall: WAV Duration resolved to {wav_duration:.2f} seconds.")
+                play_start = time.time()
+                
+            # If call is answered, monitor playback elapsed time
+            if answered:
+                elapsed = time.time() - play_start
+                # Replay if user pressed 1 OR if playback reached the end (+ 4 seconds silence)
+                if elapsed >= (wav_duration + 4.0) or call.dtmf_action == '1':
+                    if call.dtmf_action == '1':
+                        print("SyncCall: DTMF 1 detected. Replaying immediately.")
+                    else:
+                        print("SyncCall: Timeout reached. Replaying message by default.")
+                        
+                    call.replay_audio()
+                    play_start = time.time()
+                    call.dtmf_action = None  # Reset DTMF flag
+            else:
+                # Ringing timeout (45 seconds limit if not answered)
+                if time.time() - start_time > 45:
+                    print("SyncCall: Ringing timeout reached. Hanging up call.")
+                    try:
+                        call.hangup(pj.CallOpParam(True))
+                    except:
+                        pass
+                    break
+                    
+        print("SyncCall: Call disconnected.")
+        
+        # Determine the final result message
+        result = "kullanıcı tarafından kapatıldı"
+        if call.dtmf_action == '0':
+            result = "0 a basıldı"
+        elif not answered:
+            result = "cevap vermedi veya meşgul"
+            
+        # Cleanup temporary TTS files
         if audio_path and os.path.basename(audio_path).startswith("tts_"):
             try:
-                print(f"Worker: Cleaning up temporary TTS file {audio_path}")
+                print(f"SyncCall: Cleaning up temporary TTS file {audio_path}")
                 os.remove(audio_path)
             except Exception as cleanup_err:
                 print(f"Error cleaning up temp file: {cleanup_err}")
                 
+        return result
+        
     except Exception as e:
-        print(f"Exception in make_call_thread: {e}")
+        print(f"Exception in make_call_sync: {e}")
         if audio_path and os.path.basename(audio_path).startswith("tts_"):
             try:
                 os.remove(audio_path)
             except:
                 pass
+        return f"error: {e}"
 
 @app.post("/api/call")
-def trigger_call(request: CallRequest, background_tasks: BackgroundTasks):
-    background_tasks.add_task(make_call_thread, request.target_uri, request.media_file_name, request.text)
+def trigger_call(request: CallRequest):
+    # Execute the call synchronously and return the outcome
+    result = make_call_sync(request.target_uri, request.media_file_name, request.text)
     return {
-        "status": "initiated",
+        "status": "completed",
         "target": request.target_uri,
-        "media_file_name": request.media_file_name,
-        "text": request.text,
-        "message": "Call thread spawned. Audio preparation starting in background. Watch container logs for updates."
+        "result": result
     }
 
 if __name__ == "__main__":

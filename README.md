@@ -41,7 +41,7 @@ docker run -d --name voip-agent -p 8000:8000 -v ./sounds:/app/sounds pjsua2-call
 
 ### Trigger a Call
 
-To initiate a SIP call, send an HTTP `POST` request to `/api/call`. You can either play a pre-recorded file or synthesize a text message on-the-fly:
+To initiate a SIP call, send an HTTP `POST` request to `/api/call`. The call runs **synchronously** and returns the final call outcome in the API response after the call ends.
 
 #### Option A: Playing a Pre-recorded File
 You can place any audio file (e.g., `.mp3`, `.wav`) in the `sounds/` directory. The container will automatically standardize it to the compliant format (`PCM 16-bit, 8000Hz, Mono WAV`) using **FFmpeg** before making the call:
@@ -56,8 +56,8 @@ curl -X POST http://localhost:8000/api/call \
   }'
 ```
 
-#### Option B: Synthesizing Text-to-Speech (TTS)
-You can send raw text. The container will synthesize it into natural Turkish speech using **Piper TTS** (with the pre-installed Fahrettin voice model) and convert it to compliant format on-the-fly:
+#### Option B: Synthesizing Text-to-Speech (TTS) with IVR
+If you send raw text, the container will synthesize it into natural Turkish speech using **Piper TTS** (Fahrettin voice) and automatically append the interactive voice prompt: *"Kaydı tekrar dinlemek için 1'e basın, çağrıyı sonlandırmak için 0'a basın."*
 
 ```bash
 curl -X POST http://localhost:8000/api/call \
@@ -65,20 +65,30 @@ curl -X POST http://localhost:8000/api/call \
   -d '{
     "target_uri": "sip:1001@your-sip-domain.com",
     "caller_id": "CustomAgent",
-    "text": "Merhaba İlker Bey, arama başarıyla gerçekleştirildi."
+    "text": "Merhaba İlker Bey, sisteminiz başarıyla kuruldu."
   }'
 ```
+
+---
+
+### 🎛️ DTMF / IVR Interactive Behavior
+
+*   **Key `1`**: Replays the audio message immediately.
+*   **Key `0`**: Hangs up the call and returns `"0 a basıldı"` in the API response.
+*   **No key pressed (Timeout)**: If the recording finishes and the user doesn't press anything within 4 seconds, the message **replays automatically** (defaulting to key `1`) and loops continuously.
+*   **User hangs up**: If the recipient hangs up their phone without pressing `0`, the API returns `"kullanıcı tarafından kapatıldı"`.
+
+---
 
 ### Response
 ```json
 {
-  "status": "initiated",
+  "status": "completed",
   "target": "sip:1001@your-sip-domain.com",
-  "media_file_name": "announcement.mp3",
-  "text": null,
-  "message": "Call thread spawned. Audio preparation starting in background. Watch container logs for updates."
+  "result": "0 a basıldı"
 }
 ```
+*(Possible `result` outcomes: `"0 a basıldı"`, `"kullanıcı tarafından kapatıldı"`, `"cevap vermedi veya meşgul"`, or `"error: ..."`)*
 
 ### Inspect Call States (Logs)
 To watch the call progression (INVITE, ringing, answer, duration, disconnect codes):
