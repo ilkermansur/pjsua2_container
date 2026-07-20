@@ -40,7 +40,11 @@ docker run -d --name voip-agent -p 8000:8000 -v ./sounds:/app/sounds pjsua2-call
 ## 📞 Usage & API Reference
 
 ### Trigger a Call
-To initiate a SIP call and play a WAV file once answered, send an HTTP `POST` request to `/api/call`:
+
+To initiate a SIP call, send an HTTP `POST` request to `/api/call`. You can either play a pre-recorded file or synthesize a text message on-the-fly:
+
+#### Option A: Playing a Pre-recorded File
+You can place any audio file (e.g., `.mp3`, `.wav`) in the `sounds/` directory. The container will automatically standardize it to the compliant format (`PCM 16-bit, 8000Hz, Mono WAV`) using **FFmpeg** before making the call:
 
 ```bash
 curl -X POST http://localhost:8000/api/call \
@@ -48,18 +52,31 @@ curl -X POST http://localhost:8000/api/call \
   -d '{
     "target_uri": "sip:1001@your-sip-domain.com",
     "caller_id": "CustomAgent",
-    "audio_file": "announcement.wav"
+    "media_file_name": "announcement.mp3"
   }'
 ```
-*(Note: If you provide a relative file name like `announcement.wav`, it will automatically resolve to `/app/sounds/announcement.wav` inside the container. PJSIP supports standard **PCM 16-bit, 8000Hz/16000Hz/32000Hz, Mono WAV** files.)*
+
+#### Option B: Synthesizing Text-to-Speech (TTS)
+You can send raw text. The container will synthesize it into natural Turkish speech using **Piper TTS** (with the pre-installed Fahrettin voice model) and convert it to compliant format on-the-fly:
+
+```bash
+curl -X POST http://localhost:8000/api/call \
+  -H "Content-Type: application/json" \
+  -d '{
+    "target_uri": "sip:1001@your-sip-domain.com",
+    "caller_id": "CustomAgent",
+    "text": "Merhaba İlker Bey, arama başarıyla gerçekleştirildi."
+  }'
+```
 
 ### Response
 ```json
 {
   "status": "initiated",
   "target": "sip:1001@your-sip-domain.com",
-  "audio_file": "announcement.wav",
-  "message": "Call thread spawned. Audio will play once answered. Watch container logs for updates."
+  "media_file_name": "announcement.mp3",
+  "text": null,
+  "message": "Call thread spawned. Audio preparation starting in background. Watch container logs for updates."
 }
 ```
 

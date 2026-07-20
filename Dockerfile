@@ -1,6 +1,6 @@
 FROM python:3.11-slim-bookworm
 
-# 1. Derleme araçlarını kur
+# 1. Derleme araçlarını kur ve ffmpeg ekle
 RUN apt-get update && apt-get install -y \
     build-essential \
     swig \
@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     wget \
     libpq-dev \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. PJSIP Source derle
@@ -20,6 +21,11 @@ RUN wget https://github.com/pjsip/pjproject/archive/refs/tags/2.14.tar.gz && \
     cd pjsip-apps/src/swig/python && \
     make && \
     python setup.py install
+
+# 3. Piper Türkçe ses modelini indir
+WORKDIR /app/models
+RUN wget https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/tr/tr_TR/fahrettin/medium/tr_TR-fahrettin-medium.onnx && \
+    wget https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/tr/tr_TR/fahrettin/medium/tr_TR-fahrettin-medium.onnx.json
 
 WORKDIR /app
 COPY requirements.txt .
