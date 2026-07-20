@@ -38,6 +38,7 @@ class MyCall(pj.Call):
         self.audio_file = audio_file
         self.player = None  # Persistent player instance to prevent garbage collection
         self.dtmf_action = None  # Tracks '0' or '1' keypresses
+        self.pressed_1 = False  # Flag to track if user ever pressed 1 during the call
 
     def onCallState(self, prm):
         try:
@@ -93,6 +94,7 @@ class MyCall(pj.Call):
                 self.hangup(call_prm)
             elif digit == '1':
                 self.dtmf_action = '1'
+                self.pressed_1 = True
                 print("DTMF Action: User pressed 1. Replay will trigger shortly.")
         except Exception as e:
             print(f"Error in onDtmfDigit callback: {e}")
@@ -223,27 +225,49 @@ def prepare_audio(media_file_name: str, text: str) -> str:
 def make_call_sync(target_uri, media_file_name, text):
     # Register the Python thread to the PJSIP engine
     ep.libRegisterThread("call_thread")
+    
+    # Append IVR prompt to text dynamically
+    if text:
+        text = text.strip()
+        if not text.endswith(".") and not text.endswith("!"):
+            text += "."
+        text += " Kaydı tekrar dinlemek için bir e basın, çağrıyı sonlandırmak için sıfır a basın."
+        
+    attempts = 2  # Total attempts (1 original + 1 retry if fails/no-answer)
     audio_path = None
-    try:
-        # Append IVR prompt to text dynamically
-        if text:
-            text = text.strip()
-            if not text.endswith(".") and not text.endswith("!"):
-                text += "."
-            text += " Kaydı tekrar dinlemek için bir e basın, çağrıyı sonlandırmak için sıfır a basın."
-            
+    
+    for attempt in range(attempts):
+        print(f"SyncCall: Attempt {attempt + 1}/{attempts} for target {target_uri}")
+        
         # Prepare the audio file (run TTS and format conversion)
         audio_path = prepare_audio(media_file_name, text)
         if not audio_path:
-            return "error: audio preparation failed"
+            # Audio preparation failure counts as an error
+            if attempt == attempts - 1:
+                return "error"
+            print("SyncCall: Audio preparation failed. Waiting 60 seconds to retry...")
+            time.sleep(60)
+            continue
             
         call = MyCall(acc, audio_file=audio_path)
         call_prm = pj.CallOpParam(True)
         
-        print(f"SyncCall: Initiating call to {target_uri}...")
-        call.makeCall(target_uri, call_prm)
-        
-        # Monitor the call synchronously
+        try:
+            print(f"SyncCall: Initiating call on attempt {attempt + 1}...")
+            call.makeCall(target_uri, call_prm)
+        except Exception as call_err:
+            print(f"SyncCall: Exception during makeCall: {call_err}")
+            if audio_path and os.path.basename(audio_path).startswith("tts_"):
+                try: os.remove(audio_path)
+                except: pass
+                
+            if attempt == attempts - 1:
+                return "error"
+            print("SyncCall: Call initiation failed. Waiting 60 seconds to retry...")
+            time.sleep(60)
+            continue
+            
+        # Monitor the call
         start_time = time.time()
         answered = False
         wav_duration = 10.0
@@ -283,13 +307,16 @@ def make_call_sync(target_uri, media_file_name, text):
                         pass
                     break
                     
-        print("SyncCall: Call disconnected.")
+        print(f"SyncCall: Attempt {attempt + 1} finished.")
         
-        # Determine the final result message
-        result = "kullanıcı tarafından kapatıldı"
+        # Determine the outcome
         if call.dtmf_action == '0':
             result = "0 a basıldı"
-        elif not answered:
+        elif call.pressed_1:
+            result = "1 e basıldı"
+        elif answered:
+            result = "kullanıcı tarafından kapatıldı"
+        else:
             result = "cevap vermedi veya meşgul"
             
         # Cleanup temporary TTS files
@@ -300,16 +327,19 @@ def make_call_sync(target_uri, media_file_name, text):
             except Exception as cleanup_err:
                 print(f"Error cleaning up temp file: {cleanup_err}")
                 
-        return result
+        # If call connected and successfully closed by user (cases 1, 2, 3), return immediately
+        if result in ["0 a basıldı", "1 e basıldı", "kullanıcı tarafından kapatıldı"]:
+            return result
+            
+        # Else if outcome is "cevap vermedi veya meşgul" (case 4) or "error" (case 5)
+        # If this is the last attempt, return the result
+        if attempt == attempts - 1:
+            return result
+            
+        print(f"SyncCall: Call failed with status '{result}'. Waiting 60 seconds before retrying...")
+        time.sleep(60)
         
-    except Exception as e:
-        print(f"Exception in make_call_sync: {e}")
-        if audio_path and os.path.basename(audio_path).startswith("tts_"):
-            try:
-                os.remove(audio_path)
-            except:
-                pass
-        return f"error: {e}"
+    return "error"
 
 @app.post("/api/call")
 def trigger_call(request: CallRequest):

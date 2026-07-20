@@ -71,12 +71,15 @@ curl -X POST http://localhost:8000/api/call \
 
 ---
 
-### 🎛️ DTMF / IVR Interactive Behavior
+### 🎛️ DTMF / IVR Interactive Behavior & Outcomes
 
-*   **Key `1`**: Replays the audio message immediately.
-*   **Key `0`**: Hangs up the call and returns `"0 a basıldı"` in the API response.
-*   **No key pressed (Timeout)**: If the recording finishes and the user doesn't press anything within 4 seconds, the message **replays automatically** (defaulting to key `1`) and loops continuously.
-*   **User hangs up**: If the recipient hangs up their phone without pressing `0`, the API returns `"kullanıcı tarafından kapatıldı"`.
+The call executes and blocks the HTTP request until it finishes. There are **5 possible outcomes** returned in the API response under `"result"`:
+
+1.  **`"0 a basıldı"`**: The recipient pressed `0` to end the call. (Returns immediately)
+2.  **`"kullanıcı tarafından kapatıldı"`**: The recipient hung up the phone without pressing `0`. (Returns immediately)
+3.  **`"1 e basıldı"`**: The recipient pressed `1` at least once to replay the message (and did not end with `0`). (Returns immediately)
+4.  **`"cevap vermedi veya meşgul"`**: The recipient did not pick up the call within 45 seconds or was busy. **(Retries once after waiting 60 seconds)**
+5.  **`"error"`**: A network, SIP, or media configuration error occurred. **(Retries once after waiting 60 seconds)**
 
 ---
 
@@ -88,7 +91,6 @@ curl -X POST http://localhost:8000/api/call \
   "result": "0 a basıldı"
 }
 ```
-*(Possible `result` outcomes: `"0 a basıldı"`, `"kullanıcı tarafından kapatıldı"`, `"cevap vermedi veya meşgul"`, or `"error: ..."`)*
 
 ### Inspect Call States (Logs)
 To watch the call progression (INVITE, ringing, answer, duration, disconnect codes):
