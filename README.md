@@ -48,17 +48,17 @@ curl -X POST http://localhost:8000/api/call \
   -d '{
     "target_uri": "sip:1001@your-sip-domain.com",
     "caller_id": "CustomAgent",
-    "audio_file": "/app/sounds/announcement.wav"
+    "audio_file": "announcement.wav"
   }'
 ```
-*(Note: PJSIP supports standard **PCM 16-bit, 8000Hz/16000Hz/32000Hz, Mono WAV** files.)*
+*(Note: If you provide a relative file name like `announcement.wav`, it will automatically resolve to `/app/sounds/announcement.wav` inside the container. PJSIP supports standard **PCM 16-bit, 8000Hz/16000Hz/32000Hz, Mono WAV** files.)*
 
 ### Response
 ```json
 {
   "status": "initiated",
   "target": "sip:1001@your-sip-domain.com",
-  "audio_file": "/app/sounds/announcement.wav",
+  "audio_file": "announcement.wav",
   "message": "Call thread spawned. Audio will play once answered. Watch container logs for updates."
 }
 ```

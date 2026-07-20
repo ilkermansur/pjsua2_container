@@ -48,11 +48,17 @@ class MyCall(pj.Call):
                     aud_med = pj.AudioMedia.typecastFromMedia(self.getMedia(i))
                     
                     if self.audio_file and not self.player:
-                        print(f"Call Media: Opening audio file {self.audio_file}...")
+                        import os
+                        resolved_path = self.audio_file
+                        # If a simple filename is provided, resolve it against /app/sounds/
+                        if not resolved_path.startswith("/"):
+                            resolved_path = os.path.join("/app/sounds", resolved_path)
+                            
+                        print(f"Call Media: Opening audio file {resolved_path}...")
                         self.player = pj.AudioMediaPlayer()
                         try:
                             # Load and play the file once (no looping)
-                            self.player.createPlayer(self.audio_file, pj.PJMEDIA_FILE_NO_LOOP)
+                            self.player.createPlayer(resolved_path, pj.PJMEDIA_FILE_NO_LOOP)
                             self.player.startTransmit(aud_med)
                             print("Call Media: Audio transmission started successfully.")
                         except Exception as player_err:
