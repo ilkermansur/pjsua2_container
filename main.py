@@ -37,7 +37,7 @@ class MyCall(pj.Call):
         self.is_answered = False
         self.audio_file = audio_file
         self.player = None  # Persistent player instance to prevent garbage collection
-        self.dtmf_action = None  # Tracks '0' or '1' keypresses
+        self.dtmf_action = None  # Tracks DTMF keypresses or 'break infinite loop'
         self.pressed_1 = False  # Flag to track if user ever pressed 1 during the call
 
     def onCallState(self, prm):
@@ -225,6 +225,13 @@ def prepare_audio(media_file_name: str, text: str) -> str:
 def make_call_sync(target_uri, media_file_name, text):
     # Register the Python thread to the PJSIP engine
     ep.libRegisterThread("call_thread")
+    
+    # Append official dynamic IVR prompt if text is provided
+    if text:
+        text = text.strip()
+        if not text.endswith(".") and not text.endswith("!"):
+            text += "."
+        text += " Alarmı tekrar dinlemek için 1'e, çağrıyı sonlandırmak için 0'a basın."
         
     attempts = 2  # Total attempts (1 original + 1 retry if fails/no-answer)
     audio_path = None
@@ -265,6 +272,7 @@ def make_call_sync(target_uri, media_file_name, text):
         answered = False
         wav_duration = 10.0
         play_start = 0.0
+        play_count = 0  # Number of times the file has been played
         
         while not call.is_disconnected:
             time.sleep(0.1)
@@ -274,8 +282,8 @@ def make_call_sync(target_uri, media_file_name, text):
                 answered = True
                 print("SyncCall: Call answered! Starting audio duration tracking.")
                 wav_duration = get_wav_duration(audio_path)
-                print(f"SyncCall: WAV Duration resolved to {wav_duration:.2f} seconds.")
                 play_start = time.time()
+                play_count = 1
                 
             # If call is answered, monitor playback elapsed time
             if answered:
@@ -284,12 +292,25 @@ def make_call_sync(target_uri, media_file_name, text):
                 if elapsed >= (wav_duration + 4.0) or call.dtmf_action == '1':
                     if call.dtmf_action == '1':
                         print("SyncCall: DTMF 1 detected. Replaying immediately.")
+                        call.replay_audio()
+                        play_start = time.time()
+                        call.dtmf_action = None  # Reset DTMF flag
+                        play_count = 1  # Reset count since user manually requested replay
                     else:
-                        print("SyncCall: Timeout reached. Replaying message by default.")
-                        
-                    call.replay_audio()
-                    play_start = time.time()
-                    call.dtmf_action = None  # Reset DTMF flag
+                        # Auto-replay check (max 3 times)
+                        if play_count < 3:
+                            play_count += 1
+                            print(f"SyncCall: Timeout reached. Auto-replaying message (Play {play_count}/3).")
+                            call.replay_audio()
+                            play_start = time.time()
+                        else:
+                            print("SyncCall: Max default plays (3) reached. Hanging up to prevent infinite loop.")
+                            call.dtmf_action = 'break infinite loop'
+                            try:
+                                call.hangup(pj.CallOpParam(True))
+                            except:
+                                pass
+                            break
             else:
                 # Ringing timeout (45 seconds limit if not answered)
                 if time.time() - start_time > 45:
@@ -305,6 +326,8 @@ def make_call_sync(target_uri, media_file_name, text):
         # Determine the outcome
         if call.dtmf_action == '0':
             result = "0 a basıldı"
+        elif call.dtmf_action == 'break infinite loop':
+            result = "break infinite loop"
         elif call.pressed_1:
             result = "1 e basıldı"
         elif answered:
@@ -320,12 +343,11 @@ def make_call_sync(target_uri, media_file_name, text):
             except Exception as cleanup_err:
                 print(f"Error cleaning up temp file: {cleanup_err}")
                 
-        # If call connected and successfully closed by user (cases 1, 2, 3), return immediately
-        if result in ["0 a basıldı", "1 e basıldı", "kullanıcı tarafından kapatıldı"]:
+        # If call connected and closed successfully (cases 1, 2, 3, or infinite-loop-break), return immediately
+        if result in ["0 a basıldı", "1 e basıldı", "kullanıcı tarafından kapatıldı", "break infinite loop"]:
             return result
             
         # Else if outcome is "cevap vermedi veya meşgul" (case 4) or "error" (case 5)
-        # If this is the last attempt, return the result
         if attempt == attempts - 1:
             return result
             

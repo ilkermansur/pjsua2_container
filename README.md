@@ -57,7 +57,7 @@ curl -X POST http://localhost:8000/api/call \
 ```
 
 #### Option B: Synthesizing Text-to-Speech (TTS) with IVR
-If you send raw text, the container will synthesize it into natural Turkish speech using **Piper TTS** (Fahrettin voice). Make sure to include any DTMF instructions directly in your text (e.g., *"Kaydı tekrar dinlemek için 1'e, kapatmak için 0'a basın"*):
+If you send raw text, the container will synthesize it into natural Turkish speech using **Piper TTS** (Fahrettin voice) and automatically append the official voice prompt: *"Alarmı tekrar dinlemek için 1'e, çağrıyı sonlandırmak için 0'a basın."*
 
 ```bash
 curl -X POST http://localhost:8000/api/call \
@@ -65,7 +65,7 @@ curl -X POST http://localhost:8000/api/call \
   -d '{
     "target_uri": "sip:1001@your-sip-domain.com",
     "caller_id": "CustomAgent",
-    "text": "Merhaba İlker Bey, sisteminiz kuruldu. Tekrar dinlemek için bire, sonlandırmak için sıfıra basın."
+    "text": "Merhaba İlker Bey, sisteminizde kritik bir durum tespit edildi."
   }'
 ```
 
@@ -73,13 +73,14 @@ curl -X POST http://localhost:8000/api/call \
 
 ### 🎛️ DTMF / IVR Interactive Behavior & Outcomes
 
-The call executes and blocks the HTTP request until it finishes. There are **5 possible outcomes** returned in the API response under `"result"`:
+The call executes and blocks the HTTP request until it finishes. There are the following possible outcomes returned in the API response under `"result"`:
 
 1.  **`"0 a basıldı"`**: The recipient pressed `0` to end the call. (Returns immediately)
 2.  **`"kullanıcı tarafından kapatıldı"`**: The recipient hung up the phone without pressing `0`. (Returns immediately)
 3.  **`"1 e basıldı"`**: The recipient pressed `1` at least once to replay the message (and did not end with `0`). (Returns immediately)
-4.  **`"cevap vermedi veya meşgul"`**: The recipient did not pick up the call within 45 seconds or was busy. **(Retries once after waiting 60 seconds)**
-5.  **`"error"`**: A network, SIP, or media configuration error occurred. **(Retries once after waiting 60 seconds)**
+4.  **`"break infinite loop"`**: The recipient listened to the message but did not press `1` or `0`. To prevent infinite looping, the container played the recording **3 times maximum** and hung up. (Returns immediately)
+5.  **`"cevap vermedi veya meşgul"`**: The recipient did not pick up the call within 45 seconds or was busy. **(Retries once after waiting 60 seconds)**
+6.  **`"error"`**: A network, SIP, or media configuration error occurred. **(Retries once after waiting 60 seconds)**
 
 ---
 
@@ -88,7 +89,7 @@ The call executes and blocks the HTTP request until it finishes. There are **5 p
 {
   "status": "completed",
   "target": "sip:1001@your-sip-domain.com",
-  "result": "0 a basıldı"
+  "result": "break infinite loop"
 }
 ```
 
